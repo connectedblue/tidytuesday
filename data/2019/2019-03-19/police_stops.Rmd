@@ -1,0 +1,130 @@
+---
+title: "Police stops across the US"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE}
+library(tidyverse)
+
+```
+
+The summary data is from a [Stanford Open Policing Project paper](https://arxiv.org/abs/1706.05678)
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+combined_data <- readr::read_csv("https://raw.githubusercontent.com/5harad/openpolicing/master/results/data_for_figures/combined_data.csv")
+```
+
+---
+Driving population can be inferred from stop rate for each county.
+
+Want to roll up the rates at the state level
+
+---
+
+This dataset is broken down into state, county and race of driver stopped by the police.  The number of annual stops is given together with the rate - this allows an inference of the total driver population for each ethnic group.  We want to analyse differences at the state level between search and arrest rates, so the number of each is calculated at the county and rolled up to state level.
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+state_data <- combined_data %>%
+              mutate(driving_population=round(stops_per_year/stop_rate,0),
+                     searches=search_rate*stops_per_year,
+                     arrests=arrest_rate*searches,
+                     contraband_hits=hit_rate*searches) %>%
+              group_by(state, driver_race) %>%
+              summarise(driving_population=sum(driving_population, na.rm = TRUE),
+                        stops_per_year =sum(stops_per_year, na.rm = TRUE),
+                        searches=round(sum(searches, na.rm = TRUE),0),
+                        arrests=round(sum(arrests, na.rm = TRUE),0),
+                        contraband_hits=round(sum(contraband_hits, na.rm = TRUE),0)
+                        ) %>%
+              mutate(percent_of_population=round(driving_population/sum(driving_population),3),
+                     search_rate=round(searches/driving_population,10),
+                     arrest_rate=round(arrests/driving_population,10),
+                     contraband_rate=round(contraband_hits/driving_population,10))
+
+
+
+```
+
+```{r eval=FALSE, warning=FALSE, include=FALSE}
+g <- ggplot(state_data %>% filter(search_rate>0), aes(x=percent_of_population, y=search_rate)) +
+     theme_light() +
+     geom_point() + 
+     facet_grid(. ~ driver_race ) +
+     geom_text(aes(label=state),hjust=0, vjust=0, nudge_x =0.03, size=2) +
+     xlab('Percentage of state driving population') + ylab('') +
+     ggtitle('Percentage of driving population subject to Stop and search')
+  
+g
+
+```
+
+---
+What is striking from this plot is the relative difference between Black/Hispanic rates compared to white across states.  For example, CA has a distinct step up to Hispanic and then again to Black.  FL, on the other hand has a much less pronounced increases between the racial groups.
+
+For each state, it will be interesting to see the stop and search rates for black and hispanic relative to white.
+---
+
+Finally, the search and arrest rates for hispanic and black are expressed as multiples of the rates for white.
+
+```{r}
+relative_rates <- state_data %>%
+                  select(state, driver_race, search_rate, arrest_rate) %>%
+                  gather(variable, value, search_rate, arrest_rate) %>%
+                  unite(temp, driver_race, variable) %>%
+                  spread(temp, value) %>%
+                  mutate(black_search_rate_relative_to_white=round(Black_search_rate/White_search_rate,1),
+                         hispanic_search_rate_relative_to_white=round(Hispanic_search_rate/White_search_rate,1),
+                         black_arrest_rate_relative_to_white=round(Black_arrest_rate/White_arrest_rate,1),
+                         hispanic_arrest_rate_relative_to_white=round(Hispanic_arrest_rate/White_arrest_rate,1)
+                  ) %>%
+                  drop_na() %>%
+                  select(state, contains('relative_to')) %>%
+                  gather(metric, rate, -state) %>%
+                  mutate(metric=gsub('_rate_relative_to_white','',metric)) %>%
+                  separate(metric, into = c('race', 'metric')) %>%
+                  spread(metric, rate)
+
+
+```
+
+The following plot shows how each state varies between search and arrest rates across the two minority groups.
+```{r echo=FALSE}
+# MT and VT are showing outlier and missing values - exclude from plot
+ggplot(relative_rates %>% filter(!state %in% c('MT', 'VT') ), aes(x=arrest, y=search, col=race)) +
+  geom_point() +
+  geom_text(aes(label=state),hjust=0, vjust=0, nudge_x =0.08, size=3) + 
+  
+  scale_color_manual(values=c('blue', 'black')) +
+  scale_y_continuous(labels=function(x) paste0(x,"x")) +
+  scale_x_continuous(labels=function(x) paste0(x,"x")) +
+  
+  theme_light() +
+  theme(legend.title = element_blank()) +
+  xlab('Arrest after stop') +
+  ylab('Stop and search') +
+  labs(title='Driver stop, search and arrest in different US states',
+       subtitle='Rate of occurence by minorities relative to white driving population',
+       caption='Source: Stanford Open Policing Project') 
+                  
+```
+
+
+
+
+
+```{r eval=FALSE, include=FALSE}
+library(usmap)
+
+plot_usmap(data = state_data, values = "search_rate", lines = "grey") + 
+  facet_wrap(driver_race ~ .) +
+  scale_fill_continuous(name = "Stop and search rate") + 
+  theme(legend.position = "right") +
+  ggtitle('Stop and search rate by state')
+```
+
