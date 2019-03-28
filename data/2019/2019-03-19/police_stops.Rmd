@@ -111,7 +111,8 @@ ggplot(relative_rates %>% filter(!state %in% c('MT', 'VT') ), aes(x=arrest, y=se
   labs(title='Driver stop, search and arrest in different US states',
        subtitle='Rate of occurence by minorities relative to white driving population',
        caption='Source: Stanford Open Policing Project') 
-                  
+
+ggsave('state_arrest.png')
 ```
 
 

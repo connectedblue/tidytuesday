@@ -1,0 +1,113 @@
+---
+title: "Seattle pets"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(lubridate)
+#seattle_pets <- readr::read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-03-26/seattle_pets.csv")
+seattle_pets <- readr::read_csv("seattle_pets.csv")
+# Fix date column
+seattle_pets <- seattle_pets %>%
+                mutate(license_issue_date=mdy(license_issue_date)) %>%
+                filter(license_issue_date>dmy('01-06-2016'))
+
+# most data is after 2016
+```
+
+```{r}
+# distribution of data over time
+
+ggplot(seattle_pets, aes(x=license_issue_date, y=..count.., col=species)) +geom_line(stat='bin', bins=50)
+```
+
+
+What are the most popular names each month and how do they vary over time?
+
+## split between species
+
+```{r}
+monthly_popular_names <- seattle_pets %>%
+                         group_by(species, month=floor_date(license_issue_date, "quarter"), animals_name) %>%
+                         summarise(number=n()) %>%
+                         filter(number>5) %>%
+                         drop_na() %>%
+                         group_by(species, month) %>%
+                         arrange(species, month,-number) %>%
+                         mutate(monthly_rank=row_number()) %>%
+                         filter(monthly_rank<6)
+
+
+```
+
+
+```{r}
+ggplot(monthly_popular_names, aes(x=month, y=animals_name)) + 
+     geom_point(col='black', size=5) +
+     geom_text(aes(label=monthly_rank),hjust=0.5, vjust=0.5, nudge_x =0, size=3, col='white') +
+     facet_grid(species~.) + 
+     theme_light()
+```
+
+
+
+## Across all species
+
+
+```{r}
+monthly_popular_names <- seattle_pets %>%
+                         group_by(month=floor_date(license_issue_date, "quarter"), animals_name) %>%
+                         summarise(number=n()) %>%
+                         filter(number>5) %>%
+                         drop_na() %>%
+                         group_by(month) %>%
+                         arrange(month,-number) %>%
+                         mutate(monthly_rank=row_number()) %>%
+                         filter(monthly_rank<6) %>%
+                         ungroup() %>%
+                         group_by(animals_name) %>%
+                         mutate(score=6-monthly_rank,
+                                name_score=sum(score)) %>%
+                         ungroup()
+                      
+
+                          
+# Make animal name a factor variable with levels in descending order of name_score
+
+
+animal_name_order <- monthly_popular_names %>%
+                     select(animals_name, name_score) %>%
+                     arrange(-name_score) %>%
+                     distinct() 
+
+monthly_popular_names <- monthly_popular_names %>%
+                         mutate(animals_name=factor(animals_name, levels = animal_name_order$animals_name))
+
+```
+
+
+```{r}
+library(scales)
+
+ggplot(monthly_popular_names, aes(x=month, y=reorder(animals_name, desc(animals_name)))) + 
+     geom_point(col='blue', size=5) +
+     geom_text(aes(label=monthly_rank),hjust=0.5, vjust=0.5, nudge_x =0, size=3, col='white') +
+     scale_x_date(labels = date_format("%b %y")) +
+     xlab('Quarterly name rank') +
+     ylab('') +
+     labs(title='Most popular pet names in Seattle',
+          subtitle='',
+          caption='Source: Seattle Open Data Program') +
+     theme_light() +
+     theme(panel.grid.major = element_blank(), 
+           panel.grid.minor = element_blank(),
+           panel.background = element_rect(fill = 'cornsilk', colour = 'cornsilk'),
+           axis.ticks = element_blank()
+     )
+```
