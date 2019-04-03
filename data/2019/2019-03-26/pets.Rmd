@@ -18,19 +18,20 @@ library(lubridate)
 ## Data collection
 The raw dataset contains license information for registered pets in Seattle.  Although some data records go back a long time, before 2017 they are sporadic.  So we'll consider only data after Jan 2017 and answer a question based on that.
 
-This paper contains a summary of the steps and conclusion.  The full analysis [can be found here]()
-```{r message=FALSE, warning=FALSE}
+This paper contains a summary of the steps and conclusion.  The full analysis [can be found here](https://github.com/connectedblue/tidytuesday/blob/master/data/2019/2019-03-26/pets.Rmd).
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
 # read in the data from disk - can uncomment the line below to retrieve from github if required
 #seattle_pets <- readr::read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-03-26/seattle_pets.csv")
 seattle_pets <- readr::read_csv("seattle_pets.csv")
 
 
 # Fix date column
+# most data is after 2016
 seattle_pets <- seattle_pets %>%
                 mutate(license_issue_date=mdy(license_issue_date)) %>%
-                filter(license_issue_date>dmy('01-06-2016'))
+                filter(license_issue_date>dmy('01-01-2017'))
 
-# most data is after 2016
 ```
 
 ```{r eval=FALSE, include=FALSE}
@@ -40,11 +41,12 @@ ggplot(seattle_pets, aes(x=license_issue_date, y=..count.., col=species)) +geom_
 ```
 
 
-What are the most popular names each month and how do they vary over time?
 
-## split between species
+## What are the most popular names each month and how do they vary over time?
 
-```{r}
+To answer this question, we'll first determine the most popular names each quarter across species.  We'll only count names that are registered  more than 5 times in a quarter.  We can then see the top 5 names each quarter.
+
+```{r include=FALSE}
 monthly_popular_names <- seattle_pets %>%
                          group_by(species, month=floor_date(license_issue_date, "quarter"), animals_name) %>%
                          summarise(number=n()) %>%
@@ -59,20 +61,20 @@ monthly_popular_names <- seattle_pets %>%
 ```
 
 
-```{r}
+```{r eval=FALSE, include=FALSE}
 ggplot(monthly_popular_names, aes(x=month, y=animals_name)) + 
      geom_point(col='black', size=5) +
      geom_text(aes(label=monthly_rank),hjust=0.5, vjust=0.5, nudge_x =0, size=3, col='white') +
-     facet_grid(species~.) + 
+     facet_grid(species~., scales = 'free') + 
      theme_light()
 ```
 
 
 
-## Across all species
 
 
-```{r}
+
+```{r eval=FALSE, include=FALSE}
 monthly_popular_names <- seattle_pets %>%
                          group_by(month=floor_date(license_issue_date, "quarter"), animals_name) %>%
                          summarise(number=n()) %>%
@@ -88,12 +90,17 @@ monthly_popular_names <- seattle_pets %>%
                                 name_score=sum(score)) %>%
                          ungroup()
                       
+```
 
-                          
+We can determine the most popular names overall by assigning a simple score to each name - the higher the rank, the higher the score.  If we add up the scores over each quarter, we can use this to order the name field by, so most popular names appear at the top.
+```{r}
 # Make animal name a factor variable with levels in descending order of name_score
-
-
 animal_name_order <- monthly_popular_names %>%
+                         ungroup() %>%
+                         group_by(animals_name) %>%
+                         mutate(score=6-monthly_rank,
+                                name_score=sum(score)) %>%
+                         ungroup() %>%
                      select(animals_name, name_score) %>%
                      arrange(-name_score) %>%
                      distinct() 
@@ -103,25 +110,35 @@ monthly_popular_names <- monthly_popular_names %>%
 
 ```
 
-
-```{r}
+Bringing all this together, we can see the distribution of the five most popular names in the following plot
+```{r fig.height=9, message=FALSE, warning=FALSE}
 library(scales)
 
+bg <- 'seashell'
+
+
 ggplot(monthly_popular_names, aes(x=month, y=reorder(animals_name, desc(animals_name)))) + 
-     geom_point(col='grey', size=5) +
+     geom_point(col='white', size=5) +
      geom_point(aes(col=factor(monthly_rank)),stroke = 1, shape=1, size=6) +
-     geom_text(aes(label=monthly_rank),hjust=0.5, vjust=0.5, nudge_x =0, size=3, col='black') +
+     geom_text(aes(label=monthly_rank, col=factor(monthly_rank)),hjust=0.5, vjust=0.5, nudge_x =0, size=3) +
+     scale_color_manual(values=c('palevioletred4', 'palevioletred3', 'palevioletred2','palevioletred1','palevioletred')) +
      scale_x_date(labels = date_format("%b %y")) +
-     xlab('Quarterly name rank') +
-     ylab('') +
-     labs(title='Most popular pet names in Seattle',
-          subtitle='',
+     facet_wrap(species~., ncol=1,scales = 'free', strip.position="top")  +
+     labs(title='Top Five pet names in Seattle',
+          subtitle='Ranked each quarter',
+          x='',y='',
           caption='Source: Seattle Open Data Program') +
      theme_light() +
      theme(panel.grid.major = element_blank(), 
            panel.grid.minor = element_blank(),
-           panel.background = element_rect(fill = 'cornsilk', colour = 'cornsilk'),
+           panel.background = element_rect(fill = bg, colour = bg),
            axis.ticks = element_blank(),
            legend.position = "none"
      )
 ```
+
+```{r include=FALSE}
+ggsave('pet_rank.png', height=10, dpi=150)
+```
+
+While the top three names overall are the same between cats and dogs, we can see there is a greater variation in cats.  While Lucy is number 1 or 2 every quarter except one, there 6 different cat names that have held the number 1 spot.
