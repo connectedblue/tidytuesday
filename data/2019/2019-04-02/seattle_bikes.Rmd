@@ -1,0 +1,348 @@
+---
+title: "Bike usage in Seattle 2014 - 2019"
+author: "Chris Shaw"
+date: "12 April 2019"
+output: html_document
+abstract: "_This paper explores whether Seattle will reach its goal of quadrupling bike usage by 2030, as expressed in their Bike Master Plan.  The data collected from city bike counters forms the basis of the projection model.
+
+Overall bike usage is decline across both commuter and leisure users, with the exception of some trails which are projected to show some modest growth in recreational use. However, the goal of quadrupling will not be achieved without some change in the patterns seen over the last five years._"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(scales)
+library(prophet)
+
+# set up a theme that can be added to plots
+
+bg <- 'seashell'
+datasource <- 'Source: Seattle Department of Transportation'
+
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+theme <- list(
+     theme_light() +
+     theme(panel.grid.major = element_blank(),
+           panel.grid.minor = element_blank(),
+           panel.background = element_rect(fill = bg, colour = bg),
+           axis.ticks = element_blank()
+     ), 
+     labs(caption=datasource),
+     scale_color_manual(values=cbbPalette),
+     scale_fill_manual(values=cbbPalette)
+)
+
+```
+
+
+
+## Data collection
+The raw dataset contains counts of bikes and pedestrians in Seattle at hourly time intervals over a five year period.  Counters were placed on different routes in the city and measure the direction of travel
+
+This paper contains a summary of the steps and conclusion.  The full analysis [can be found here](https://github.com/connectedblue/tidytuesday/blob/master/data/2019/2019-04-02/seattle_bikes.Rmd).
+
+After some initial analysis, we decided to remove some routes which contained incomplete data.  Further columns are added to further categorise the time of day and classify each observation into two categories:
+
+ - *commuter* this refers to the hours 6am-9am and 5-7pm weekdays
+ - *leisure* all other times during the day, including weekend
+ - *overnight* 10pm - 6am every day
+ 
+The purpose of segmenting the data this way is to determine whether leisure or commuter use of bikes is trending upwards or downwards.  While it is certainly true that people commute outside these times, it will be seen that overall there is a large directional spike in usage during this period that we are justified in labelling it as commuter usage.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# read in the data from disk - can uncomment the line below to retrieve from github if required
+#bike_traffic <- readr::read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-04-02/bike_traffic.csv")
+
+
+bike_traffic <- readr::read_csv("bike_traffic.csv")
+
+# Fix date column and remove two routes missing a lot of data
+bike_traffic <- bike_traffic %>%
+                mutate(datetime=mdy_hms(date),
+                       date=floor_date(datetime, 'day'),
+                       week=floor_date(datetime, 'week'),
+                       hour=hour(datetime),
+                       day=ordered(weekdays(datetime),levels=c("Monday", "Tuesday", "Wednesday", "Thursday", 
+"Friday", "Saturday", "Sunday")),
+                       month=as.Date(paste0(year(datetime),'-',month(datetime),'-01')),
+                       weekend=(day %in% c("Saturday", "Sunday")),
+                       usage=if_else(hour %in% c(22,23,0,1,2,3,4,5,6), 'overnight',
+                                      if_else(((hour %in% c(6,7,8,16,17,18)) & weekend==FALSE), 'commuter', 'leisure' ))
+                        ) %>%
+                filter(!(crossing %in% c('NW 58th St Greenway at 22nd Ave',
+                                         'Sealth Trail')),
+                       !is.na(bike_count), 
+                        bike_count!=0)
+
+
+```
+
+
+
+---
+Check how the data is distributed across routes.  Remove data in 2013 and 2019, and also the Sealth trail (not enough data in those categories)
+---
+
+```{r eval=FALSE, include=FALSE}
+bike_traffic %>% 
+                filter (!is.na(bike_count), 
+                        year(date)>=2014 & year(date)<=2018, 
+                        crossing != 'Sealth Trail',
+                        bike_count==0) %>%
+                group_by(crossing, direction, year(date)) %>%
+                tally() %>% 
+                spread(`year(date)`, n) 
+
+```
+
+---
+There's a lot of zeros - we need to try and determine what is a genuine zero and what might be a broken sensor. Lets look at the weekly counts on each route and see whats missing
+---
+
+```{r eval=FALSE, include=FALSE}
+bike_traffic %>%
+  group_by(crossing, week) %>%
+  summarise(daily_bike_count=sum(bike_count)) %>%
+ggplot(aes(x=week, y=daily_bike_count)) +
+  geom_line() + 
+  facet_wrap(.~crossing,scales = 'free')
+
+```
+
+---
+Seasonal patterns can be clearly seen on the major routes with just a few odd weeks when no data was collected (may look to impute that data later on).
+
+Stealth Trail and NW58th look like they have a lot of missing data so worth filtering out.
+
+Counts look flat year over year, but we'd need to break out direction to be sure
+
+What does peak hour traffic look like on the most popular routes?
+---
+
+```{r eval=FALSE, include=FALSE}
+bike_traffic %>%
+  group_by(crossing, week) %>%
+  summarise(daily_bike_count=sum(bike_count)) %>%
+ggplot(aes(x=week, y=daily_bike_count)) +
+  geom_line() + 
+  facet_wrap(.~crossing,scales = 'free')
+```
+
+## Peak and non peak times
+
+First we look at the average bike count on each route direction on different hours of the day.  We don't split out weekends at this stage, nor do we compare different years.  We can get a feel for where spikes in usage occur which help to classify between the different types of usage.
+
+
+```{r}
+bike_traffic %>%
+  group_by(crossing, direction, hour) %>%
+  summarise(ave_hourly_bike_count=mean(bike_count, na.rm = TRUE)) %>%
+ggplot(aes(x=hour, y=ave_hourly_bike_count, col=direction)) +
+  geom_line() + 
+  facet_wrap(.~crossing,scales = 'free') +
+  labs(title='Main bike routes in Seattle ',
+          subtitle='Busiest hours in each direction',
+          x='Hour of day',y='Mean bikes per hour') +
+  theme  +
+  theme(legend.position=c(.85,.25))
+```
+
+It can be clearly seen that each route has a pronounced peak in usage in the early morning and late afternoon.  Furthermore, there is a direction switch in those routes later in the day.  
+
+As an example, 39th Ave NE shows almost the same number of people biking south in the morning as going north in the evening, with little in between.  This suggests it is largely a one way commuter route with perhaps little leisure utility.
+
+Elliot Bay on the other hand seems to have two types of commuter usage - the largest being north-south in the mornings and the opposite in the evenings.  But there is also a smaller south-north set of commuters who then go north-south in the evenings.  In addition, that route also attracts leisure users during the day.
+
+
+```{r include=FALSE}
+ggsave('bike_busy_hours.png', height=10, width = 15 , dpi=150)
+```
+
+
+## Weekend versus weekday use
+
+We can refine this view further by looking how direction varies between weekdays and weekends on the routes.
+
+```{r}
+bike_traffic %>%
+  filter(crossing!='MTS Trail') %>%
+  group_by(weekend, crossing, direction, hour) %>%
+  summarise(ave_hourly_bike_count=mean(bike_count, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(weekend=if_else(weekend, 'Weekend', 'Weekday')) %>%
+ggplot(aes(x=hour, y=ave_hourly_bike_count, col=direction)) +
+  geom_line() + 
+  facet_wrap(.~weekend+crossing,nrow=4, dir='v', labeller = label_wrap_gen(width=80, multi_line = FALSE)) +
+  labs(title='Usage at weekends compared to weekdays',
+          subtitle='',
+          x='Hour of day',y='Mean bikes per hour') +
+  theme +
+  theme(legend.position=c(.95,.90))
+```
+
+Now we can see much more clearly that direction in peak hours during the week really matters to bike users, whereas during weekends, no one direction dominates.
+
+It can also be seen that the heights of each weekday directional peak are roughly the same, leading us to conclude that the same people making the journey in the morning are going the opposite way in the evening.  This is the definition of commuting and justifies our segmenting the data in this way.
+
+Finally, we can see see if some routes might be more geared toward leisure usage rather than commuting.
+
+
+```{r}
+bike_traffic %>%
+  group_by(crossing, date, day) %>%
+  summarise(daily_bike_count=sum(bike_count, na.rm = TRUE)) %>%
+  ungroup() %>%
+  group_by(crossing, day) %>%
+  summarise(ave_bike_count_for_day=mean(daily_bike_count, na.rm = TRUE)) %>%
+ggplot(aes(x=reorder(day, desc(day)), y=ave_bike_count_for_day)) +
+  geom_bar(stat ='identity') + 
+  coord_flip() +
+  facet_wrap(.~crossing,scales = 'free') +
+  labs(title='Which are the most popular days for each route?',
+          subtitle='',
+          x='Mean bike counts',y='') +
+  theme +
+  theme(legend.position=c(.85,.25))
+```
+
+The routes that are named Trails are the most heavily used, suggesting they are dedicated facilities.
+
+
+---
+Next few plots are part of the exploratory analysis for the projection model
+---
+
+```{r eval=FALSE, fig.height=15, fig.width=10, include=FALSE}
+bike_traffic %>%
+  filter(usage!='overnight', bike_count>0, !is.na(bike_count)) %>%
+  group_by( usage, crossing, month) %>%
+  summarise(ave_bike_count=median(bike_count, na.rm = TRUE)) %>%
+ggplot(aes(x=month, y=ave_bike_count)) +
+  geom_line() +
+  facet_wrap(.~usage+crossing, nrow=5, dir = 'v', scales='free') +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title='Seattle bike Commuters 8am - 9am weekdays',
+          subtitle='Mean ',
+          x='Hour of day',y='Mean bikes per hour') +
+  theme +
+  theme(legend.position=c(.85,.25))
+```
+
+
+```{r eval=FALSE, fig.height=15, fig.width=10, include=FALSE}
+bike_traffic %>%
+  filter(usage!='overnight', bike_count>0, !is.na(bike_count)) %>%
+  group_by( usage, crossing, month, week) %>%
+  summarise(daily_bike_count=sum(bike_count, na.rm = TRUE)) %>%
+  ungroup() %>%
+  group_by( usage, crossing, month) %>%
+  summarise(mean_daily_bike_count=mean(daily_bike_count)) %>%
+ggplot(aes(x=month, y=mean_daily_bike_count)) +
+  geom_line() +
+  facet_wrap(.~usage+crossing, nrow=5, dir = 'v', scales='fixed') +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title='Seattle bike Commuters 8am - 9am weekdays',
+          subtitle='Mean ',
+          x='Hour of day',y='Mean bikes per hour') +
+  theme +
+  theme(legend.position=c(.85,.25))
+```
+
+
+
+
+
+
+
+```{r eval=FALSE, include=FALSE}
+bike_traffic %>%
+  filter(usage!='overnight', bike_count>0, !is.na(bike_count)) %>%
+  group_by( usage, crossing, month) %>%
+  summarise(ave_bike_count=mean(bike_count, na.rm = TRUE)) %>%
+ggplot(aes(x=crossing, y=ave_bike_count)) + geom_boxplot()
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+
+training <- bike_traffic %>%
+  group_by( week) %>%
+  summarise(weekly_bike_count=sum(bike_count, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(ds=week, y=weekly_bike_count) %>%
+  select (ds,y)
+
+m = prophet(training)
+future = make_future_dataframe(m, periods = 500, freq='week')
+forecast = predict(m, future, growth = 'logistic')
+
+# Visualize forecast
+plot(m, forecast) + theme
+
+
+# ggplot(aes(x=week, y=weekly_bike_count)) +
+#   geom_line() +
+#   labs(title='Seattle bike Commuters 8am - 9am weekdays',
+#           subtitle='Mean ',
+#           x='Hour of day',y='Mean bikes per hour') +
+#   theme 
+
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+prophet_plot_components(m, forecast)
+
+
+```
+
+
+## Will bike usage increase over time?
+
+Seattle has a [Bicycle Master Plan](http://www.seattle.gov/transportation/sdot-document-library/citywide-plans/modal-plans/bicycle-master-plan) which aims to quadruple bike journeys by 2030.  
+
+We can build a projection of future usage based on the last five years of data, to see whether they are on track for this goal. The commuter and leisure projections are modelled separately. First the model is trained using the `prophet` package
+
+
+```{r message=FALSE, warning=FALSE}
+training <- bike_traffic %>%
+  group_by( usage, crossing, week) %>%
+  summarise(y=sum(bike_count, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(ds=week, 
+         floor=0) %>%
+  select (ds,usage,crossing,y, floor) %>%
+  group_by(usage,crossing) %>%
+  do(predict(prophet(.), make_future_dataframe(prophet(.), periods = 600, freq='week'), growth = 'logistic')) %>%
+  select(ds, usage,crossing, yhat)
+
+
+
+```
+
+We then plot the values from the model.
+
+```{r fig.height = 15, fig.width = 10, fig.align = "center"}
+training %>%
+  filter(usage!='overnight') %>%
+ggplot(aes(x=ds, y=yhat)) +
+  geom_line() +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(.~usage+crossing, nrow=5, dir = 'v', scales='fixed') +
+  labs(title='Projected bike usage in Seattle through to 2030',
+          subtitle='Commuter verus leisure usage',
+          x='',y='Weekly users') +
+  theme +
+  theme(legend.position=c(.85,.25))
+```
+
+Sadly, bike usage appears to be declining on a number of routes, from both a commuting and leisure persepctive.
+
+Notable exceptions though are the MTS and Elliot Bay Trails.  However, overall usage is unlikely to quadruple over the next ten years if the trends in the last five continue.
