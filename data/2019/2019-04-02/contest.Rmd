@@ -1,0 +1,47 @@
+---
+title: "Bike usage in Seattle 2014 - 2030"
+author: "Chris Shaw"
+date: "12 April 2019"
+output: html_document
+abstract: "<h5 style='font-style:italic'>This paper explores whether Seattle will reach its goal of quadrupling bike usage by 2030, as expressed in their [Bicycle Master Plan](http://www.seattle.gov/transportation/sdot-document-library/citywide-plans/modal-plans/bicycle-master-plan).  The data collected from city bike counters forms the basis of the projection model.
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache=FALSE)
+```
+
+
+```{r include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(scales)
+library(prophet)
+library(purrr)
+
+# set up a theme that can be added to plots
+
+bg <- 'seashell'
+datasource <- 'Source: Seattle Department of Transportation'
+
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+theme <- list(
+     theme_light() +
+     theme(panel.grid.major = element_blank(),
+           panel.grid.minor = element_blank(),
+           panel.background = element_rect(fill = bg, colour = bg),
+           axis.ticks = element_blank()
+     ), 
+     labs(caption=datasource),
+     scale_color_manual(values=cbbPalette),
+     scale_fill_manual(values=cbbPalette)
+)
+
+```
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# read in the data from disk - can uncomment the line below to retrieve from github if required
+contest <- readr::read_csv("https://raw.githubusercontent.com/RUsersAsturias/contest/gh-pages/_data/data%20w%20hour.csv")
+
+```
