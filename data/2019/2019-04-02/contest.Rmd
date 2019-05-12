@@ -4,6 +4,7 @@ author: "Chris Shaw"
 date: "12 April 2019"
 output: html_document
 abstract: "<h5 style='font-style:italic'>This paper explores whether Seattle will reach its goal of quadrupling bike usage by 2030, as expressed in their [Bicycle Master Plan](http://www.seattle.gov/transportation/sdot-document-library/citywide-plans/modal-plans/bicycle-master-plan).  The data collected from city bike counters forms the basis of the projection model.
+---
 
 
 
@@ -42,6 +43,42 @@ theme <- list(
 
 ```{r echo=TRUE, message=FALSE, warning=FALSE}
 # read in the data from disk - can uncomment the line below to retrieve from github if required
-contest <- readr::read_csv("https://raw.githubusercontent.com/RUsersAsturias/contest/gh-pages/_data/data%20w%20hour.csv")
+contest <- readr::read_csv2("https://raw.githubusercontent.com/RUsersAsturias/contest/gh-pages/_data/data%20w%20hour.csv")
 
+```
+
+
+```{r}
+# look at speeding offences only
+clean <- contest %>%
+  filter(TYPE=='Velocidad') %>%
+  mutate(PLACE=fct_lump(PLACE, 50),
+         INFRACTION=fct_lump(INFRACTION, 20),
+         date=ymd_hms(paste0(YEAR,'-',MONTH,'-',DAY, ' ', as.character(HOUR)))
+         )
+
+```
+
+
+```{r}
+clean %>% group_by(INFRACTION, PLACE) %>%
+  tally() %>%
+  spread(INFRACTION, n) %>%
+  view()
+```
+
+
+
+```{r fig.height=15, fig.width=30}
+
+clean %>%
+  ggplot(aes(x=INFRACTION)) +
+  geom_bar() +
+  coord_flip()
+
+
+clean %>%
+  ggplot(aes(x=hour(date),y=stat(count))) +
+  facet_wrap(.~weekdays(date)) +
+  geom_bar(stat = "summary", fun.y = "mean") 
 ```
