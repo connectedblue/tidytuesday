@@ -36,3 +36,6 @@ vignettes/*.pdf
 *.knit.md
 .Rproj.user
 tidytuesday_github.Rproj
+
+# don't store csv in my copy of this repo
+*.csv
